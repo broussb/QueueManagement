@@ -96,6 +96,42 @@ def decrement_queue(caller: Caller):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class CallerStatus(BaseModel):
+    phone_number: str
+    queue_name: str
+    in_queue: bool
+    position: int | None = None
+
+@app.get("/queue/status", response_model=CallerStatus)
+def get_caller_status(phone_number: str, queue_name: str):
+    """
+    Checks if a specific caller is currently in a queue and returns their status and position.
+    This is useful for checking if a caller abandoned before decrementing the queue.
+    """
+    try:
+        response = supabase.table('queue').select('id, position').match({
+            'phone_number': phone_number,
+            'queue_name': queue_name
+        }).execute()
+
+        if response.data:
+            return {
+                "phone_number": phone_number,
+                "queue_name": queue_name,
+                "in_queue": True,
+                "position": response.data[0]['position']
+            }
+        else:
+            return {
+                "phone_number": phone_number,
+                "queue_name": queue_name,
+                "in_queue": False,
+                "position": None
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/queue/count/{queue_name}")
 def get_queue_count(queue_name: str):
     """
