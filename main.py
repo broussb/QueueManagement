@@ -96,6 +96,22 @@ def decrement_queue(caller: Caller):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/queue/count/{queue_name}")
+def get_queue_count(queue_name: str):
+    """
+    Returns the current number of callers in a specific queue.
+    """
+    try:
+        # Use count='exact' for an efficient count query
+        response = supabase.table('queue').select('id', count='exact').eq('queue_name', queue_name).execute()
+        
+        count = response.count if response.count is not None else 0
+        
+        return {"queue_name": queue_name, "count": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the Five9 Queue Management Service."}
