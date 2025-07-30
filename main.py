@@ -150,5 +150,5 @@ def get_queue_count(queue_name: str):
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Five9 Queue Management Service."}
+    return {"message": "Hi"}
 
