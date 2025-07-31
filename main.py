@@ -8,6 +8,29 @@ from dotenv import load_dotenv
 import json
 import asyncio
 from sse_starlette.sse import EventSourceResponse
+from starlette.requests import Request
+import asyncio
+
+# --- Real-time Broadcast Manager ---
+class BroadcastManager:
+    def __init__(self):
+        self.subscribers = []
+        self.lock = asyncio.Lock()
+
+    async def subscribe(self, queue):
+        async with self.lock:
+            self.subscribers.append(queue)
+
+    async def unsubscribe(self, queue):
+        async with self.lock:
+            self.subscribers.remove(queue)
+
+    async def broadcast(self, message: str):
+        async with self.lock:
+            for queue in self.subscribers:
+                await queue.put(message)
+
+broadcaster = BroadcastManager()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -34,44 +57,38 @@ class Caller(BaseModel):
     queue_name: str
 
 @app.post("/queue/increment")
-def increment_queue(caller: Caller):
+async def increment_queue(caller: Caller):
     """
     Adds a caller to a queue atomically using a database function and returns their position.
     """
     try:
-        # Call the PostgreSQL function `add_caller_to_queue`
         result = supabase.rpc('add_caller_to_queue', {
             'p_phone_number': caller.phone_number,
             'p_queue_name': caller.queue_name
         }).execute()
-
-        # The function returns the new position
         new_position = result.data
+        # After a successful update, trigger a broadcast
+        await broadcast_update()
         return {"position": new_position}
     except Exception as e:
-        # The DB function raises an exception for duplicates, which the client library surfaces.
-        # We check for the specific error message to return a clean 409 response.
         if 'Caller is already in queue' in str(e):
             raise HTTPException(status_code=409, detail="Caller is already in this queue.")
-        # For any other unexpected database errors, return a generic 500.
         raise HTTPException(status_code=500, detail=f"An unexpected database error occurred: {e}")
 
 @app.post("/queue/decrement")
-def decrement_queue(caller: Caller):
+async def decrement_queue(caller: Caller):
     """
     Removes a caller from the queue atomically using a database function.
     """
     try:
-        # Call the PostgreSQL function `remove_caller_from_queue`
         result = supabase.rpc('remove_caller_from_queue', {
             'p_phone_number': caller.phone_number,
             'p_queue_name': caller.queue_name
         }).execute()
-
-        # The function returns the position of the deleted caller, or 0 if not found.
         deleted_position = result.data
-
         if deleted_position > 0:
+            # After a successful update, trigger a broadcast
+            await broadcast_update()
             return {"message": f"Caller {caller.phone_number} removed from queue {caller.queue_name}."}
         else:
             return {"message": "Caller not found in the queue or already removed."}
@@ -158,25 +175,33 @@ def get_queues_summary():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Helper function to fetch the latest summary and broadcast it
+async def broadcast_update():
+    try:
+        response = supabase.rpc('get_queue_summary').execute()
+        summary = response.data or {}
+        await broadcaster.broadcast(json.dumps(summary))
+    except Exception as e:
+        print(f"Error broadcasting update: {e}")
+
 @app.get("/stream/queues/summary")
 async def stream_queues_summary(request: Request):
+    queue = asyncio.Queue()
+    await broadcaster.subscribe(queue)
+
+    # Send initial data on connect
+    await broadcast_update()
+
     async def event_generator():
-        while True:
-            if await request.is_disconnected():
-                print("Client disconnected, closing stream.")
-                break
-
-            try:
-                # Call the new SQL function to get the summary directly from the database
-                response = supabase.rpc('get_queue_summary').execute()
-                # The function returns a JSON object, default to empty if null
-                summary = response.data or {}
-                yield json.dumps(summary)
-            except Exception as e:
-                print(f"Error streaming queue summary: {e}")
-                yield json.dumps({"error": str(e)})
-
-            await asyncio.sleep(1) # Stream data every second
+        try:
+            while True:
+                message = await queue.get()
+                if await request.is_disconnected():
+                    break
+                yield message
+        finally:
+            await broadcaster.unsubscribe(queue)
+            print("Client disconnected, unsubscribed.")
 
     return EventSourceResponse(event_generator())
 
