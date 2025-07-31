@@ -1,5 +1,7 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -15,6 +17,8 @@ if not supabase_url or not supabase_key:
     raise Exception("Supabase URL and Key must be set in the .env file")
 
 supabase: Client = create_client(supabase_url, supabase_key)
+
+templates = Jinja2Templates(directory="templates")
 
 app = FastAPI(
     title="Five9 Queue Management Service",
@@ -148,7 +152,42 @@ def get_queue_count(queue_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/queues/summary")
+def get_queues_summary():
+    """
+    Returns a summary of all active queues and their current caller counts.
+    """
+    try:
+        # This query will group by queue_name and count the callers in each.
+        # Note: Supabase Python client doesn't directly support GROUP BY. 
+        # We fetch all records and process them in Python.
+        response = supabase.table('queue').select('queue_name').execute()
+        
+        if not response.data:
+            return {"queues": []}
+
+        # Count occurrences of each queue name
+        queue_counts = {}
+        for record in response.data:
+            q_name = record['queue_name']
+            queue_counts[q_name] = queue_counts.get(q_name, 0) + 1
+
+        # Format the output
+        summary = [{'queue_name': name, 'count': count} for name, count in queue_counts.items()]
+        
+        return {"queues": summary}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def read_dashboard(request: Request):
+    """
+    Serves the live dashboard HTML page.
+    """
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Five9 Queue Management Service."}
+    return {"message": "Welcome to the Five9 Queue Management Service. Visit /dashboard to see the live queue status."}
 
