@@ -33,72 +33,47 @@ class Caller(BaseModel):
 @app.post("/queue/increment")
 def increment_queue(caller: Caller):
     """
-    Adds a caller to a queue and returns their position.
-    When a new caller enters the queue, this endpoint calculates their position
-    and stores it in the database.
+    Adds a caller to a queue atomically using a database function and returns their position.
     """
     try:
-        # Check if the caller is already in the queue
-        existing_caller_response = supabase.table('queue').select('id').match({
-            'phone_number': caller.phone_number,
-            'queue_name': caller.queue_name
+        # Call the PostgreSQL function `add_caller_to_queue`
+        result = supabase.rpc('add_caller_to_queue', {
+            'p_phone_number': caller.phone_number,
+            'p_queue_name': caller.queue_name
         }).execute()
 
-        if existing_caller_response.data:
-            raise HTTPException(status_code=409, detail="Caller is already in this queue.")
-
-        # Check for existing callers in the same queue
-        response = supabase.table('queue').select('id').eq('queue_name', caller.queue_name).execute()
-        current_queue_size = len(response.data)
-        new_position = current_queue_size + 1
-
-        # Add the new caller to the queue
-        insert_response = supabase.table('queue').insert({
-            'phone_number': caller.phone_number,
-            'queue_name': caller.queue_name,
-            'position': new_position
-        }).execute()
-
-        if not insert_response.data:
-            raise HTTPException(status_code=500, detail="Failed to add caller to the queue.")
-
+        # The function returns the new position
+        new_position = result.data
         return {"position": new_position}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # The DB function raises an exception for duplicates, which the client library surfaces.
+        # We check for the specific error message to return a clean 409 response.
+        if 'Caller is already in queue' in str(e):
+            raise HTTPException(status_code=409, detail="Caller is already in this queue.")
+        # For any other unexpected database errors, return a generic 500.
+        raise HTTPException(status_code=500, detail=f"An unexpected database error occurred: {e}")
 
 @app.post("/queue/decrement")
 def decrement_queue(caller: Caller):
     """
-    Removes a caller from the queue and updates the positions of others.
-    This is triggered when a call is connected to an agent.
+    Removes a caller from the queue atomically using a database function.
     """
     try:
-        # Find and remove the caller from the queue
-        deleted_caller_response = supabase.table('queue').delete().match({
-            'phone_number': caller.phone_number, 
-            'queue_name': caller.queue_name
+        # Call the PostgreSQL function `remove_caller_from_queue`
+        result = supabase.rpc('remove_caller_from_queue', {
+            'p_phone_number': caller.phone_number,
+            'p_queue_name': caller.queue_name
         }).execute()
 
-        if not deleted_caller_response.data:
-            # This can happen if the caller is not in the queue, which is not necessarily an error.
+        # The function returns the position of the deleted caller, or 0 if not found.
+        deleted_position = result.data
+
+        if deleted_position > 0:
+            return {"message": f"Caller {caller.phone_number} removed from queue {caller.queue_name}."}
+        else:
             return {"message": "Caller not found in the queue or already removed."}
-        
-        deleted_position = deleted_caller_response.data[0]['position']
-
-        # Get all callers in the same queue with a higher position
-        callers_to_update = supabase.table('queue').select('*')\
-            .eq('queue_name', caller.queue_name)\
-            .gt('position', deleted_position)\
-            .execute()
-
-        # Decrement their positions
-        for c in callers_to_update.data:
-            new_pos = c['position'] - 1
-            supabase.table('queue').update({'position': new_pos}).eq('id', c['id']).execute()
-
-        return {"message": f"Caller {caller.phone_number} removed from queue {caller.queue_name}."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"An unexpected database error occurred: {e}")
 
 class CallerStatus(BaseModel):
     phone_number: str
