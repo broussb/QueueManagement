@@ -5,6 +5,9 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import json
+import asyncio
+from sse_starlette.sse import EventSourceResponse
 
 # Load environment variables from .env file
 load_dotenv()
@@ -153,6 +156,28 @@ def get_queues_summary():
         return {"queues": summary}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/stream/queues/summary")
+async def stream_queues_summary(request: Request):
+    async def event_generator():
+        while True:
+            if await request.is_disconnected():
+                print("Client disconnected, closing stream.")
+                break
+
+            try:
+                response = supabase.table('queue').select('queue_name', count='exact').group('queue_name').execute()
+                summary = {item['queue_name']: item['count'] for item in response.data}
+                yield json.dumps(summary)
+            except Exception as e:
+                print(f"Error streaming queue summary: {e}")
+                yield json.dumps({"error": str(e)})
+
+            await asyncio.sleep(1) # Stream data every second
+
+    return EventSourceResponse(event_generator())
+
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def read_dashboard(request: Request):

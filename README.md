@@ -1,6 +1,6 @@
-# Five9 Queue Management Service
+#   Queue Management Service
 
-This service provides a way to manage a caller's position in a queue for a Five9 environment. It uses FastAPI for the web service and Supabase for the database.
+This service provides a way to manage a caller's position in a queue for a  environment. It uses FastAPI for the web service and Supabase for the database.
 
 ## Setup
 
@@ -58,4 +58,4 @@ This service provides a way to manage a caller's position in a queue for a Five9
 
 5.  **Deploy:**
     -   Click **Create Web Service**. Render will automatically build and deploy your application.
-    -   Once the deployment is complete, Render will provide you with a public URL (e.g., `https://your-service-name.onrender.com`). This is the URL you will use in your Five9 IVR.
+    -   Once the deployment is complete, Render will provide you with a public URL (e.g., `https://your-service-name.onrender.com`). This is the URL you will use in your IVR.

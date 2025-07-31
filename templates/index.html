@@ -9,9 +9,15 @@
         .container { max-width: 800px; margin: auto; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         h1 { text-align: center; color: #007bff; }
         table { width: 100%; border-collapse: collapse; margin-top: 2rem; }
-        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #dee2e6; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #dee2e6; transition: background-color 0.3s ease; }
         th { background-color: #e9ecef; }
-        .last-updated { text-align: center; margin-top: 1rem; color: #6c757d; font-size: 0.9rem; }
+        .status { text-align: center; margin-top: 1rem; font-size: 0.9rem; font-weight: bold; }
+        .status-connecting { color: #ffc107; }
+        .status-connected { color: #28a745; }
+        .status-disconnected, .status-error { color: #dc3545; }
+        td.updating {
+            background-color: #fff3cd;
+        }
     </style>
 </head>
 <body>
@@ -25,45 +31,78 @@
                 </tr>
             </thead>
             <tbody>
+                <tr id="Sales_HighVolume-row"><td>Sales_HighVolume</td><td id="count-Sales_HighVolume">0</td></tr>
+                <tr id="Support_Tier1-row"><td>Support_Tier1</td><td id="count-Support_Tier1">0</td></tr>
+                <tr id="Billing_Inquiries-row"><td>Billing_Inquiries</td><td id="count-Billing_Inquiries">0</td></tr>
             </tbody>
         </table>
-        <p class="last-updated" id="last-updated">Loading...</p>
+        <p class="status" id="status">Status: Initializing...</p>
     </div>
 
     <script>
-        async function fetchQueueData() {
-            try {
-                const response = await fetch('/queues/summary');
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-                const data = await response.json();
-                updateTable(data.queues);
-                document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-            } catch (error) {
-                console.error('Failed to fetch queue data:', error);
-                document.getElementById('last-updated').textContent = 'Error loading data.';
-            }
-        }
+        const queues = ["Sales_HighVolume", "Support_Tier1", "Billing_Inquiries"];
+        const statusDiv = document.getElementById('status');
 
-        function updateTable(queues) {
-            const tbody = document.querySelector('#queues-table tbody');
-            tbody.innerHTML = '';
-            if (queues.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;">No active queues</td></tr>';
-                return;
-            }
+        function updateTable(data) {
+            let hasUpdates = false;
             queues.forEach(queue => {
-                const row = document.createElement('tr');
-                row.innerHTML = `<td>${queue.queue_name}</td><td>${queue.count}</td>`;
-                tbody.appendChild(row);
+                const countCell = document.getElementById(`count-${queue}`);
+                if (countCell) {
+                    const currentValue = parseInt(countCell.textContent, 10);
+                    const newValue = data[queue] || 0;
+                    if (currentValue !== newValue) {
+                        hasUpdates = true;
+                        // Add a class to trigger a subtle animation
+                        countCell.classList.add('updating');
+                        setTimeout(() => {
+                            countCell.textContent = newValue;
+                            // Remove the class after the animation
+                            setTimeout(() => countCell.classList.remove('updating'), 300);
+                        }, 100);
+                    }
+                }
             });
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            fetchQueueData();
-            setInterval(fetchQueueData, 5000); 
-        });
+        function connect() {
+            console.log("Connecting to event stream...");
+            statusDiv.textContent = "Status: Connecting...";
+            statusDiv.className = "status status-connecting";
+
+            const eventSource = new EventSource("/stream/queues/summary");
+
+            eventSource.onopen = function() {
+                console.log("Connection to stream opened.");
+                statusDiv.textContent = "Status: Connected";
+                statusDiv.className = "status status-connected";
+            };
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.error) {
+                        console.error("Server-side error:", data.error);
+                        statusDiv.textContent = "Status: Error receiving data";
+                        statusDiv.className = "status status-error";
+                    } else {
+                        updateTable(data);
+                    }
+                } catch (e) {
+                    console.error("Failed to parse event data:", e);
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                console.error("EventSource failed:", err);
+                eventSource.close();
+                statusDiv.textContent = "Status: Disconnected. Retrying in 5s...";
+                statusDiv.className = "status status-disconnected";
+                setTimeout(connect, 5000); // Attempt to reconnect after 5 seconds
+            };
+        }
+
+        // Initial connection on page load
+        document.addEventListener('DOMContentLoaded', connect);
     </script>
 </body>
 </html>
