@@ -167,8 +167,10 @@ async def stream_queues_summary(request: Request):
                 break
 
             try:
-                response = supabase.table('queue').select('queue_name', count='exact').group('queue_name').execute()
-                summary = {item['queue_name']: item['count'] for item in response.data}
+                # Call the new SQL function to get the summary directly from the database
+                response = supabase.rpc('get_queue_summary').execute()
+                # The function returns a JSON object, default to empty if null
+                summary = response.data or {}
                 yield json.dumps(summary)
             except Exception as e:
                 print(f"Error streaming queue summary: {e}")
